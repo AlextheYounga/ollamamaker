@@ -1,3 +1,5 @@
+"""Shared data models and constants for ollamamaker."""
+
 from dataclasses import dataclass
 
 
@@ -7,6 +9,8 @@ class OllamaError(Exception):
 
 @dataclass
 class ModelArch:
+    """Normalized architecture metadata returned from Ollama."""
+
     name: str
     architecture: str
     context_length: int
@@ -66,6 +70,7 @@ WEIGHT_OVERHEAD_FACTOR = 1.1
 
 
 def estimate_model_weight_mib(parameter_count: int, quantization_level: str) -> int:
+    """Estimate model memory footprint in MiB from parameters and quant."""
     if parameter_count == 0:
         return 0
     bits = QUANT_BITS_PER_PARAM.get(quantization_level.upper(), DEFAULT_QUANT_BITS)

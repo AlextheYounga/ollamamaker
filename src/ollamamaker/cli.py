@@ -1,6 +1,9 @@
+"""CLI entrypoint for building tuned Ollama models."""
+
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -20,7 +23,13 @@ from .core import (
 from .models import DEFAULT_KV_CACHE_TYPE, KV_CACHE_TYPES, OllamaError
 
 
-def _print_report(arch, vram_mib: int, ram_mib: int, kv_cache_type: str, recommended_ctx: int) -> None:
+def _print_report(
+    arch,
+    vram_mib: int,
+    ram_mib: int,
+    kv_cache_type: str,
+    recommended_ctx: int,
+) -> None:
     tiers = recommended_tiers(arch, vram_mib, ram_mib, kv_cache_type)
     max_out = max_output_tokens(arch)
     print()
@@ -83,9 +92,42 @@ def _write_modelfile(path: Path, source_model: str, context_limit: int) -> None:
 def _open_editor(path: Path) -> None:
     editor = os.environ.get("VISUAL") or os.environ.get("EDITOR")
     if editor:
-        subprocess.run([editor, str(path)], check=True)
+        subprocess.run([*shlex.split(editor), str(path)], check=True)  # noqa: S603
         return
-    subprocess.run(["xdg-open", str(path)], check=True)
+    subprocess.run(["xdg-open", str(path)], check=True)  # noqa: S603,S607
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Create tuned Ollama models from local hardware recommendations.")
+    parser.add_argument("model", nargs="?", help="Source Ollama model id, example qwen3.5:9b")
+    parser.add_argument("--name", help="Name for the newly created model")
+    parser.add_argument("--kv-cache-type", choices=sorted(KV_CACHE_TYPES.keys()))
+    parser.add_argument("--vram", type=int, default=None, metavar="GB")
+    parser.add_argument("--ram", type=int, default=None, metavar="GB")
+    parser.add_argument("--modelfile", default="Modelfile", help="Path to write/read Modelfile")
+    parser.add_argument("--edit", action="store_true", help="Open the Modelfile in your editor")
+    return parser
+
+
+def _handle_edit(modelfile_path: Path) -> None:
+    modelfile_path.parent.mkdir(parents=True, exist_ok=True)
+    if not modelfile_path.exists():
+        modelfile_path.write_text("", encoding="utf-8")
+    _open_editor(modelfile_path)
+
+
+def _run_create_model(new_model_name: str, modelfile_path: Path) -> None:
+    try:
+        subprocess.run(  # noqa: S603
+            ["ollama", "create", new_model_name, "-f", str(modelfile_path)],  # noqa: S607
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"error: ollama create failed with exit code {exc.returncode}",
+            file=sys.stderr,
+        )
+        sys.exit(exc.returncode)
 
 
 def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str]:
@@ -120,22 +162,12 @@ def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Create tuned Ollama models from local hardware recommendations.")
-    parser.add_argument("model", nargs="?", help="Source Ollama model id, example qwen3.5:9b")
-    parser.add_argument("--name", help="Name for the newly created model")
-    parser.add_argument("--kv-cache-type", choices=sorted(KV_CACHE_TYPES.keys()))
-    parser.add_argument("--vram", type=int, default=None, metavar="GB")
-    parser.add_argument("--ram", type=int, default=None, metavar="GB")
-    parser.add_argument("--modelfile", default="Modelfile", help="Path to write/read Modelfile")
-    parser.add_argument("--edit", action="store_true", help="Open the Modelfile in your editor")
-    args = parser.parse_args()
+    """Run the ollamamaker command line workflow."""
+    args = _build_parser().parse_args()
 
     modelfile_path = Path(args.modelfile).resolve()
     if args.edit:
-        modelfile_path.parent.mkdir(parents=True, exist_ok=True)
-        if not modelfile_path.exists():
-            modelfile_path.write_text("", encoding="utf-8")
-        _open_editor(modelfile_path)
+        _handle_edit(modelfile_path)
         return
 
     try:
@@ -174,17 +206,7 @@ def main() -> None:
     print(f"Updated opencode config: {opencode_path}")
     print(f"Creating model: {new_model_name}")
 
-    try:
-        subprocess.run(
-            ["ollama", "create", new_model_name, "-f", str(modelfile_path)],
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        print(
-            f"error: ollama create failed with exit code {exc.returncode}",
-            file=sys.stderr,
-        )
-        sys.exit(exc.returncode)
+    _run_create_model(new_model_name, modelfile_path)
 
     print(f"Model created: {new_model_name}")
 

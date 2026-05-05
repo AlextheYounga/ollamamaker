@@ -1,8 +1,11 @@
+"""Core Ollama data fetching and recommendation calculations."""
+
 import json
 import re
 import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from .models import (
     CTX_TIERS,
@@ -16,25 +19,30 @@ from .models import (
     estimate_model_weight_mib,
 )
 
-
 RUNTIME_OVERHEAD_MIB = 512
+THOUSAND = 1_000
+MILLION = 1_000_000
+MIB = 1_024
 
 
 def fmt_tokens(n: int) -> str:
-    if n >= 1_000_000:
-        return f"{n / 1_000_000:.0f}M"
-    if n >= 1_000:
-        return f"{n / 1_000:.0f}k"
+    """Format token counts in compact human-readable units."""
+    if n >= MILLION:
+        return f"{n / MILLION:.0f}M"
+    if n >= THOUSAND:
+        return f"{n / THOUSAND:.0f}k"
     return str(n)
 
 
 def fmt_mib(n: int) -> str:
-    if n >= 1_024:
-        return f"{n / 1_024:.1f} GB"
+    """Format MiB values as MB/GB display strings."""
+    if n >= MIB:
+        return f"{n / MIB:.1f} GB"
     return f"{n} MB"
 
 
 def parse_num_ctx(parameters_str: str) -> int:
+    """Extract a `num_ctx` value from Ollama parameters text."""
     for line in parameters_str.splitlines():
         match = re.match(r"^\s*num_ctx\s+(\d+)", line)
         if match:
@@ -47,11 +55,13 @@ def kv_cache_bytes(
     num_ctx: int,
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
 ) -> int:
+    """Compute KV cache bytes for a context size."""
     dtype_bytes = KV_CACHE_TYPES.get(kv_cache_type, KV_CACHE_TYPES[DEFAULT_KV_CACHE_TYPE])
     return int(num_ctx * arch.num_layers * arch.num_kv_heads * arch.head_dim * 2 * dtype_bytes)
 
 
 def max_output_tokens(arch: ModelArch) -> int:
+    """Return architecture output-token cap using known defaults."""
     return KNOWN_OUTPUT_LIMITS.get(arch.architecture, DEFAULT_OUTPUT_LIMIT)
 
 
@@ -61,6 +71,7 @@ def recommended_tiers(
     ram_mib: int,
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
 ) -> list[tuple[int, int, str]]:
+    """Return context tiers with KV size and placement label."""
     vram_for_kv = max(0, vram_mib - arch.model_weight_mib - RUNTIME_OVERHEAD_MIB)
     total_memory_mib = vram_mib + ram_mib
     results = []
@@ -83,6 +94,7 @@ def recommended_context(
     ram_mib: int,
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
 ) -> int:
+    """Choose the highest recommended context based on available memory."""
     tiers = recommended_tiers(arch, vram_mib, ram_mib, kv_cache_type)
     viable = [(ctx, lbl) for ctx, _, lbl in tiers if lbl != "too large"]
     if not viable:
@@ -92,37 +104,39 @@ def recommended_context(
 
 
 def detect_hardware() -> tuple[int, int]:
+    """Detect total VRAM/RAM in MiB from host machine."""
     vram = 0
     ram = 0
     try:
         out = subprocess.check_output(
-            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],  # noqa: S607
             stderr=subprocess.DEVNULL,
             text=True,
         )
         vram = sum(int(x.strip()) for x in out.strip().splitlines() if x.strip().isdigit())
-    except Exception:
-        pass
+    except (subprocess.SubprocessError, OSError, ValueError):
+        vram = 0
 
     try:
-        with open("/proc/meminfo", encoding="utf-8") as handle:
+        with Path("/proc/meminfo").open(encoding="utf-8") as handle:
             for line in handle:
                 if line.startswith("MemTotal:"):
                     ram = int(line.split()[1]) // 1024
                     break
-    except Exception:
-        pass
+    except (OSError, ValueError, IndexError):
+        ram = 0
     return vram, ram
 
 
 def _api_post(path: str, payload: dict, api_base: str) -> dict:
-    req = urllib.request.Request(
+    """POST helper for Ollama API calls."""
+    req = urllib.request.Request(  # noqa: S310
         f"{api_base}{path}",
         data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:  # noqa: S310
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
         body = exc.read().decode(errors="replace")
@@ -131,20 +145,21 @@ def _api_post(path: str, payload: dict, api_base: str) -> dict:
         except (json.JSONDecodeError, ValueError):
             msg = body
         raise OllamaError(msg) from exc
-    except Exception as exc:
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise OllamaError(f"could not connect to Ollama at {api_base} - {exc}") from exc
 
 
 def _api_get(path: str, api_base: str) -> dict:
-    req = urllib.request.Request(f"{api_base}{path}")
+    req = urllib.request.Request(f"{api_base}{path}")  # noqa: S310
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310
             return json.loads(response.read())
-    except Exception:
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
         return {}
 
 
 def fetch_available_models(api_base: str = OLLAMA_API) -> list[str]:
+    """List locally available Ollama model ids."""
     resp = _api_get("/api/tags", api_base)
     return [model.get("name", "") for model in resp.get("models", []) if model.get("name")]
 
@@ -158,6 +173,7 @@ def _fetch_model_vram_from_ps(model: str, api_base: str) -> int:
 
 
 def fetch_model_arch(model: str, api_base: str = OLLAMA_API) -> ModelArch:
+    """Fetch and normalize architecture metadata for a model."""
     resp = _api_post("/api/show", {"model": model}, api_base)
     model_info = resp.get("model_info", {})
     details = resp.get("details", {})
