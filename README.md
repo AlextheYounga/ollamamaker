@@ -32,13 +32,7 @@ Create tuned Ollama models from your local hardware profile, generate Modelfiles
 From this repository:
 
 ```bash
-uv sync
-```
-
-Run with:
-
-```bash
-uv run ollamamaker
+uv tool install -e .
 ```
 
 ## Quick start
@@ -46,7 +40,7 @@ uv run ollamamaker
 Interactive flow:
 
 ```bash
-uv run ollamamaker
+ollamamaker
 ```
 
 You will be prompted for:
