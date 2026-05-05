@@ -20,9 +20,7 @@ from .core import (
 from .models import DEFAULT_KV_CACHE_TYPE, KV_CACHE_TYPES, OllamaError
 
 
-def _print_report(
-    arch, vram_mib: int, ram_mib: int, kv_cache_type: str, recommended_ctx: int
-) -> None:
+def _print_report(arch, vram_mib: int, ram_mib: int, kv_cache_type: str, recommended_ctx: int) -> None:
     tiers = recommended_tiers(arch, vram_mib, ram_mib, kv_cache_type)
     max_out = max_output_tokens(arch)
     print()
@@ -38,9 +36,7 @@ def _print_report(
         print(f"  Quantization     : {arch.quantization_level}")
     print(f"  KV cache type    : {kv_cache_type}")
     if arch.num_ctx_override:
-        print(
-            f"  Current num_ctx  : {fmt_tokens(arch.num_ctx_override)}  (baked into Modelfile)"
-        )
+        print(f"  Current num_ctx  : {fmt_tokens(arch.num_ctx_override)}  (baked into Modelfile)")
     else:
         print("  Current num_ctx  : 2048  (Ollama default - no Modelfile override)")
     print()
@@ -54,9 +50,7 @@ def _print_report(
     for ctx, kv_mib, placement in tiers:
         marker = "        <-- recommended" if ctx == recommended_ctx else ""
         pct = f"{(kv_mib / vram_mib) * 100:.0f}%" if vram_mib else "n/a"
-        print(
-            f"  {fmt_tokens(ctx):<14} {fmt_mib(kv_mib):<12} {pct:<12} {placement:<14}{marker}"
-        )
+        print(f"  {fmt_tokens(ctx):<14} {fmt_mib(kv_mib):<12} {pct:<12} {placement:<14}{marker}")
 
 
 def _ensure_opencode_config(path: Path, context_limit: int, output_limit: int) -> None:
@@ -126,22 +120,14 @@ def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Create tuned Ollama models from local hardware recommendations."
-    )
-    parser.add_argument(
-        "model", nargs="?", help="Source Ollama model id, example qwen3.5:9b"
-    )
+    parser = argparse.ArgumentParser(description="Create tuned Ollama models from local hardware recommendations.")
+    parser.add_argument("model", nargs="?", help="Source Ollama model id, example qwen3.5:9b")
     parser.add_argument("--name", help="Name for the newly created model")
     parser.add_argument("--kv-cache-type", choices=sorted(KV_CACHE_TYPES.keys()))
     parser.add_argument("--vram", type=int, default=None, metavar="GB")
     parser.add_argument("--ram", type=int, default=None, metavar="GB")
-    parser.add_argument(
-        "--modelfile", default="Modelfile", help="Path to write/read Modelfile"
-    )
-    parser.add_argument(
-        "--edit", action="store_true", help="Open the Modelfile in your editor"
-    )
+    parser.add_argument("--modelfile", default="Modelfile", help="Path to write/read Modelfile")
+    parser.add_argument("--edit", action="store_true", help="Open the Modelfile in your editor")
     args = parser.parse_args()
 
     modelfile_path = Path(args.modelfile).resolve()

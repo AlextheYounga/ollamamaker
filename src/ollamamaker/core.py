@@ -47,12 +47,8 @@ def kv_cache_bytes(
     num_ctx: int,
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
 ) -> int:
-    dtype_bytes = KV_CACHE_TYPES.get(
-        kv_cache_type, KV_CACHE_TYPES[DEFAULT_KV_CACHE_TYPE]
-    )
-    return int(
-        num_ctx * arch.num_layers * arch.num_kv_heads * arch.head_dim * 2 * dtype_bytes
-    )
+    dtype_bytes = KV_CACHE_TYPES.get(kv_cache_type, KV_CACHE_TYPES[DEFAULT_KV_CACHE_TYPE])
+    return int(num_ctx * arch.num_layers * arch.num_kv_heads * arch.head_dim * 2 * dtype_bytes)
 
 
 def max_output_tokens(arch: ModelArch) -> int:
@@ -104,9 +100,7 @@ def detect_hardware() -> tuple[int, int]:
             stderr=subprocess.DEVNULL,
             text=True,
         )
-        vram = sum(
-            int(x.strip()) for x in out.strip().splitlines() if x.strip().isdigit()
-        )
+        vram = sum(int(x.strip()) for x in out.strip().splitlines() if x.strip().isdigit())
     except Exception:
         pass
 
@@ -152,9 +146,7 @@ def _api_get(path: str, api_base: str) -> dict:
 
 def fetch_available_models(api_base: str = OLLAMA_API) -> list[str]:
     resp = _api_get("/api/tags", api_base)
-    return [
-        model.get("name", "") for model in resp.get("models", []) if model.get("name")
-    ]
+    return [model.get("name", "") for model in resp.get("models", []) if model.get("name")]
 
 
 def _fetch_model_vram_from_ps(model: str, api_base: str) -> int:
@@ -171,23 +163,15 @@ def fetch_model_arch(model: str, api_base: str = OLLAMA_API) -> ModelArch:
     details = resp.get("details", {})
     parameters = resp.get("parameters", "")
 
-    architecture = model_info.get(
-        "general.architecture", details.get("family", "unknown")
-    )
+    architecture = model_info.get("general.architecture", details.get("family", "unknown"))
 
     def pick_value(suffix: str, default: int = 0) -> int:
         return int(model_info.get(f"{architecture}.{suffix}", default) or default)
 
-    context_length = pick_value("context_length") or pick_value(
-        "max_position_embeddings"
-    )
+    context_length = pick_value("context_length") or pick_value("max_position_embeddings")
     num_layers = pick_value("block_count")
-    num_kv_heads = pick_value("attention.head_count_kv") or pick_value(
-        "attention.head_count"
-    )
-    head_dim = pick_value("attention.key_length") or pick_value(
-        "attention.value_length"
-    )
+    num_kv_heads = pick_value("attention.head_count_kv") or pick_value("attention.head_count")
+    head_dim = pick_value("attention.key_length") or pick_value("attention.value_length")
 
     if not all([context_length, num_layers, num_kv_heads, head_dim]):
         raise OllamaError(
@@ -200,9 +184,7 @@ def fetch_model_arch(model: str, api_base: str = OLLAMA_API) -> ModelArch:
     quantization_level = str(details.get("quantization_level", ""))
     model_weight_mib = _fetch_model_vram_from_ps(model, api_base)
     if model_weight_mib == 0 and parameter_count and quantization_level:
-        model_weight_mib = estimate_model_weight_mib(
-            parameter_count, quantization_level
-        )
+        model_weight_mib = estimate_model_weight_mib(parameter_count, quantization_level)
 
     return ModelArch(
         name=model,

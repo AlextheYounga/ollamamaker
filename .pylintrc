@@ -1,0 +1,90 @@
+[MAIN]
+# Load custom plugin package from .dev without polluting project root.
+init-hook=import sys, pathlib; sys.path.insert(0, str(pathlib.Path(".dev").resolve()))
+load-plugins=pylint_plugin
+
+# Use all available CPU cores.
+jobs=0
+
+# Pickle collected data for faster subsequent runs.
+persistent=yes
+
+# Minimum pylint version required.
+py-version=3.12
+
+# Keep files focused and reviewable.
+max-module-lines=400
+
+[MESSAGES CONTROL]
+# Disable messages that duplicate Ruff rules already enforced in ruff.toml,
+# plus a handful of messages that are too noisy for general use.
+disable=
+    # ---- duplicated by Ruff ----
+    C0103,  # invalid-name           (Ruff N)
+    C0114,  # missing-module-docstring (Ruff D100)
+    C0115,  # missing-class-docstring  (Ruff D101)
+    C0116,  # missing-function-docstring (Ruff D103)
+    C0301,  # line-too-long           (Ruff E501)
+    C0303,  # trailing-whitespace     (Ruff W291)
+    C0304,  # missing-final-newline   (Ruff W292)
+    C0305,  # trailing-newlines       (Ruff W391)
+    C0411,  # wrong-import-order      (Ruff I)
+    C0412,  # ungrouped-imports       (Ruff I)
+    C0413,  # wrong-import-position   (Ruff I)
+    W0611,  # unused-import           (Ruff F401)
+    W0612,  # unused-variable         (Ruff F841)
+    W0613,  # unused-argument         (Ruff ARG)
+    W0622,  # redefined-builtin       (Ruff A)
+    R0903,  # too-few-public-methods  (subjective; Ruff has no equivalent)
+    # ---- noisy / project-dependent ----
+    W0511,  # fixme / todo comments
+    R0801,  # duplicate-code          (cross-file; slow and noisy)
+
+[FORMAT]
+# Keep in sync with ruff.toml line-length.
+max-line-length=120
+
+[DESIGN]
+# Keep in sync with ruff.toml [lint.pylint] thresholds.
+max-args=5
+max-branches=10
+max-returns=6
+max-statements=40
+max-attributes=10
+max-bool-expr=5
+max-locals=15
+max-public-methods=20
+
+[SIMILARITIES]
+# Minimum lines of a block of code to consider for duplication.
+min-similarity-lines=6
+ignore-comments=yes
+ignore-docstrings=yes
+ignore-imports=yes
+
+[BASIC]
+# Naming conventions — align with PEP 8 / Ruff N rules.
+argument-naming-style=snake_case
+attr-naming-style=snake_case
+class-naming-style=PascalCase
+const-naming-style=UPPER_CASE
+function-naming-style=snake_case
+method-naming-style=snake_case
+module-naming-style=snake_case
+variable-naming-style=snake_case
+# Single-char names allowed as loop variables / throwaway.
+good-names=i,j,k,n,x,y,z,_,T
+
+[TYPECHECK]
+# Suppress no-member errors for common dynamic attributes.
+ignored-classes=
+    optparse.Values,
+    thread._local,
+    _thread._local,
+    argparse.Namespace
+
+[EXCEPTIONS]
+# Warn when these broad exception types are caught.
+overgeneral-exceptions=
+    builtins.BaseException,
+    builtins.Exception
