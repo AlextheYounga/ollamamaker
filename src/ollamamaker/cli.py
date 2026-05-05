@@ -24,6 +24,7 @@ from .core import (
 from .models import DEFAULT_KV_CACHE_TYPE, KV_CACHE_TYPES, OllamaError
 
 MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$")
+DEFAULT_MODELFILE_DIR = Path.home() / ".ollama" / "custom"
 
 
 def _print_report(
@@ -65,7 +66,24 @@ def _print_report(
         print(f"  {fmt_tokens(ctx):<14} {fmt_mib(kv_mib):<12} {pct:<12} {placement:<14}{marker}")
 
 
-def _ensure_opencode_config(path: Path, context_limit: int, output_limit: int) -> None:
+def _model_display_name(model_name: str) -> str:
+    base = model_name.split(":", 1)[0]
+    return base.replace("-", " ").replace("_", " ").title()
+
+
+def _dict_value(container: dict, key: str) -> dict:
+    value = container.get(key, {})
+    if isinstance(value, dict):
+        return value
+    return {}
+
+
+def _ensure_opencode_config(
+    path: Path,
+    model_name: str,
+    context_limit: int,
+    output_limit: int,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
     if path.exists():
@@ -75,12 +93,32 @@ def _ensure_opencode_config(path: Path, context_limit: int, output_limit: int) -
             data = {}
     if not isinstance(data, dict):
         data = {}
-    limit = data.get("limit", {})
-    if not isinstance(limit, dict):
-        limit = {}
-    limit["context"] = context_limit
-    limit["output"] = output_limit
-    data["limit"] = limit
+    if "$schema" not in data:
+        data["$schema"] = "https://opencode.ai/config.json"
+
+    provider = _dict_value(data, "provider")
+    ollama_provider = _dict_value(provider, "ollama")
+
+    ollama_provider.setdefault("npm", "@ai-sdk/openai-compatible")
+    ollama_provider.setdefault("name", "Ollama (local)")
+
+    options = _dict_value(ollama_provider, "options")
+    options.setdefault("baseURL", "http://localhost:11434/v1")
+    ollama_provider["options"] = options
+
+    models = _dict_value(ollama_provider, "models")
+    model_config = _dict_value(models, model_name)
+
+    model_config.setdefault("name", _model_display_name(model_name))
+    model_config["limit"] = {
+        "context": context_limit,
+        "output": output_limit,
+    }
+    models[model_name] = model_config
+    ollama_provider["models"] = models
+    provider["ollama"] = ollama_provider
+    data["provider"] = provider
+
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -107,7 +145,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--kv-cache-type", choices=sorted(KV_CACHE_TYPES.keys()))
     parser.add_argument("--vram", type=int, default=None, metavar="GB")
     parser.add_argument("--ram", type=int, default=None, metavar="GB")
-    parser.add_argument("--modelfile", default="Modelfile", help="Path to write/read Modelfile")
+    parser.add_argument(
+        "--modelfile",
+        default=None,
+        help="Path to write/read Modelfile (default: ~/.ollama/custom/<name>.Modelfile)",
+    )
     parser.add_argument("--edit", action="store_true", help="Open the Modelfile in your editor")
     return parser
 
@@ -117,6 +159,11 @@ def _handle_edit(modelfile_path: Path) -> None:
     if not modelfile_path.exists():
         modelfile_path.write_text("", encoding="utf-8")
     _open_editor(modelfile_path)
+
+
+def _default_modelfile_path(new_model_name: str) -> Path:
+    safe_name = new_model_name.replace("/", "_").replace(":", "_")
+    return DEFAULT_MODELFILE_DIR / f"{safe_name}.Modelfile"
 
 
 def _run_create_model(new_model_name: str, modelfile_path: Path) -> None:
@@ -175,17 +222,19 @@ def main() -> None:
     """Run the ollamamaker command line workflow."""
     args = _build_parser().parse_args()
 
-    modelfile_path = Path(args.modelfile).resolve()
-    if args.edit:
-        _handle_edit(modelfile_path)
-        return
-
     try:
         model_id, new_model_name, kv_cache_type = _collect_inputs(args)
         arch = fetch_model_arch(model_id)
     except OllamaError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
+
+    modelfile_path = (
+        Path(args.modelfile).expanduser().resolve() if args.modelfile else _default_modelfile_path(new_model_name)
+    )
+    if args.edit:
+        _handle_edit(modelfile_path)
+        return
 
     auto_vram, auto_ram = detect_hardware()
     vram_mib = args.vram * 1024 if args.vram is not None else auto_vram
@@ -209,7 +258,7 @@ def main() -> None:
 
     _write_modelfile(modelfile_path, model_id, chosen_ctx)
     opencode_path = Path.cwd() / ".opencode" / "opencode.json"
-    _ensure_opencode_config(opencode_path, chosen_ctx, output_limit)
+    _ensure_opencode_config(opencode_path, new_model_name, chosen_ctx, output_limit)
 
     print()
     print(f"Updated Modelfile: {modelfile_path}")
