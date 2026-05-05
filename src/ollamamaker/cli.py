@@ -166,6 +166,38 @@ def _default_modelfile_path(new_model_name: str) -> Path:
     return DEFAULT_MODELFILE_DIR / f"{safe_name}.Modelfile"
 
 
+def _resolve_edit_modelfile_path(args: argparse.Namespace) -> Path:
+    if args.modelfile:
+        return Path(args.modelfile).expanduser().resolve()
+
+    if args.name:
+        return _default_modelfile_path(args.name.strip())
+
+    DEFAULT_MODELFILE_DIR.mkdir(parents=True, exist_ok=True)
+    existing = sorted(DEFAULT_MODELFILE_DIR.glob("*.Modelfile"))
+
+    if existing:
+        create_label = "Create new Modelfile"
+        selected = inquirer.select(
+            message="Select Modelfile to edit",
+            choices=[*map(str, existing), create_label],
+        ).execute()
+        if selected != create_label:
+            return Path(selected)
+
+    entered_name = inquirer.text(
+        message="Model name for new Modelfile",
+        default="",
+    ).execute()
+    model_name = entered_name.strip()
+    if not model_name or not MODEL_NAME_RE.fullmatch(model_name):
+        raise OllamaError(
+            "invalid model name. Use letters/numbers and ._-/ with an optional "
+            "single ':tag' suffix; spaces are not allowed"
+        )
+    return _default_modelfile_path(model_name)
+
+
 def _run_create_model(new_model_name: str, modelfile_path: Path) -> None:
     try:
         subprocess.run(  # noqa: S603
@@ -222,6 +254,14 @@ def main() -> None:
     """Run the ollamamaker command line workflow."""
     args = _build_parser().parse_args()
 
+    if args.edit:
+        try:
+            _handle_edit(_resolve_edit_modelfile_path(args))
+        except OllamaError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        return
+
     try:
         model_id, new_model_name, kv_cache_type = _collect_inputs(args)
         arch = fetch_model_arch(model_id)
@@ -232,9 +272,6 @@ def main() -> None:
     modelfile_path = (
         Path(args.modelfile).expanduser().resolve() if args.modelfile else _default_modelfile_path(new_model_name)
     )
-    if args.edit:
-        _handle_edit(modelfile_path)
-        return
 
     auto_vram, auto_ram = detect_hardware()
     vram_mib = args.vram * 1024 if args.vram is not None else auto_vram
