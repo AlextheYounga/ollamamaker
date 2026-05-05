@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -21,6 +22,8 @@ from .core import (
     recommended_tiers,
 )
 from .models import DEFAULT_KV_CACHE_TYPE, KV_CACHE_TYPES, OllamaError
+
+MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$")
 
 
 def _print_report(
@@ -143,13 +146,20 @@ def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str]:
     )
     if model_id not in available_models:
         raise OllamaError(f"model '{model_id}' is not installed locally")
-    new_model = (
-        args.name
-        or inquirer.text(
-            message="New model name",
-            default=f"{model_id.split(':')[0]}-custom:latest",
+    suggested_name = f"{model_id.split(':')[0]}-custom:latest"
+    if args.name:
+        new_model = args.name.strip()
+    else:
+        entered_name = inquirer.text(
+            message=f"New model name (default: {suggested_name})",
+            default="",
         ).execute()
-    )
+        new_model = entered_name.strip() or suggested_name
+    if not new_model or not MODEL_NAME_RE.fullmatch(new_model):
+        raise OllamaError(
+            "invalid model name. Use letters/numbers and ._-/ with an optional "
+            "single ':tag' suffix; spaces are not allowed"
+        )
     kv_cache_type = (
         args.kv_cache_type
         or inquirer.select(
