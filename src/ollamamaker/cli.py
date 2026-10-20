@@ -15,55 +15,21 @@ from .core import (
     detect_hardware,
     fetch_available_models,
     fetch_model_arch,
-    fmt_mib,
-    fmt_tokens,
-    max_output_tokens,
     recommended_context,
-    recommended_tiers,
+    recommended_output_limit,
 )
-from .models import DEFAULT_KV_CACHE_TYPE, KV_CACHE_TYPES, OllamaError
+from .models import (
+    CONTEXT_PROFILES,
+    DEFAULT_CONTEXT_PROFILE,
+    DEFAULT_KV_CACHE_TYPE,
+    KV_CACHE_TYPES,
+    ContextPolicy,
+    OllamaError,
+)
+from .reporting import RecommendationReport, print_report
 
 MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?$")
 DEFAULT_MODELFILE_DIR = Path.home() / ".ollama" / "custom"
-
-
-def _print_report(
-    arch,
-    vram_mib: int,
-    ram_mib: int,
-    kv_cache_type: str,
-    recommended_ctx: int,
-) -> None:
-    tiers = recommended_tiers(arch, vram_mib, ram_mib, kv_cache_type)
-    max_out = max_output_tokens(arch)
-    print()
-    print(f"  Model            : {arch.name}")
-    print(f"  Architecture     : {arch.architecture}")
-    print(f"  Arch max context : {fmt_tokens(arch.context_length)}")
-    print(f"  Layers           : {arch.num_layers}")
-    print(f"  KV heads         : {arch.num_kv_heads}")
-    print(f"  Head dim         : {arch.head_dim}")
-    if arch.model_weight_mib:
-        print(f"  Model weight     : {fmt_mib(arch.model_weight_mib)}")
-    if arch.quantization_level:
-        print(f"  Quantization     : {arch.quantization_level}")
-    print(f"  KV cache type    : {kv_cache_type}")
-    if arch.num_ctx_override:
-        print(f"  Current num_ctx  : {fmt_tokens(arch.num_ctx_override)}  (baked into Modelfile)")
-    else:
-        print("  Current num_ctx  : 2048  (Ollama default - no Modelfile override)")
-    print()
-    print(f"  VRAM available   : {fmt_mib(vram_mib)}")
-    print(f"  RAM available    : {fmt_mib(ram_mib)}")
-    print()
-    print(f"  Max output tokens: {fmt_tokens(max_out)}  (model architecture limit)")
-    print()
-    print("  num_ctx        KV cache     % of VRAM    placement")
-    print("  -----------------------------------------------------------------")
-    for ctx, kv_mib, placement in tiers:
-        marker = "        <-- recommended" if ctx == recommended_ctx else ""
-        pct = f"{(kv_mib / vram_mib) * 100:.0f}%" if vram_mib else "n/a"
-        print(f"  {fmt_tokens(ctx):<14} {fmt_mib(kv_mib):<12} {pct:<12} {placement:<14}{marker}")
 
 
 def _model_display_name(model_name: str) -> str:
@@ -143,6 +109,19 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("model", nargs="?", help="Source Ollama model id, example qwen3.5:9b")
     parser.add_argument("--name", help="Name for the newly created model")
     parser.add_argument("--kv-cache-type", choices=sorted(KV_CACHE_TYPES.keys()))
+    context_group = parser.add_mutually_exclusive_group()
+    context_group.add_argument(
+        "--profile",
+        choices=sorted(CONTEXT_PROFILES.keys()),
+        help="Context policy (default: prompt, with balanced suggested)",
+    )
+    context_group.add_argument("--context", type=_positive_int, metavar="TOKENS", help="Exact context target")
+    parser.add_argument("--output", type=_positive_int, metavar="TOKENS", help="Maximum output-token target")
+    parser.add_argument(
+        "--parallel",
+        type=_positive_int,
+        help="Ollama parallel requests used for memory estimates (default: OLLAMA_NUM_PARALLEL or 1)",
+    )
     parser.add_argument("--vram", type=int, default=None, metavar="GB")
     parser.add_argument("--ram", type=int, default=None, metavar="GB")
     parser.add_argument(
@@ -152,6 +131,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--edit", action="store_true", help="Open the Modelfile in your editor")
     return parser
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
 
 
 def _handle_edit(modelfile_path: Path) -> None:
@@ -212,7 +198,7 @@ def _run_create_model(new_model_name: str, modelfile_path: Path) -> None:
         sys.exit(exc.returncode)
 
 
-def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str]:
+def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str, str]:
     available_models = fetch_available_models()
     if not available_models:
         raise OllamaError("no local Ollama models found")
@@ -247,7 +233,27 @@ def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str]:
             default=DEFAULT_KV_CACHE_TYPE,
         ).execute()
     )
-    return model_id, new_model, kv_cache_type
+    profile = args.profile
+    if not args.context and not profile:
+        profile = inquirer.select(
+            message="Context profile",
+            choices=sorted(CONTEXT_PROFILES.keys()),
+            default=DEFAULT_CONTEXT_PROFILE,
+        ).execute()
+    return model_id, new_model, kv_cache_type, profile or DEFAULT_CONTEXT_PROFILE
+
+
+def _configured_parallel(args: argparse.Namespace) -> int:
+    if args.parallel is not None:
+        return args.parallel
+    configured = os.environ.get("OLLAMA_NUM_PARALLEL", "1")
+    try:
+        parallel = int(configured)
+    except ValueError as exc:
+        raise OllamaError("OLLAMA_NUM_PARALLEL must be a positive integer") from exc
+    if parallel < 1:
+        raise OllamaError("OLLAMA_NUM_PARALLEL must be a positive integer")
+    return parallel
 
 
 def main() -> None:
@@ -263,8 +269,9 @@ def main() -> None:
         return
 
     try:
-        model_id, new_model_name, kv_cache_type = _collect_inputs(args)
+        model_id, new_model_name, kv_cache_type, profile = _collect_inputs(args)
         arch = fetch_model_arch(model_id)
+        parallel = _configured_parallel(args)
     except OllamaError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -282,7 +289,13 @@ def main() -> None:
             file=sys.stderr,
         )
 
-    chosen_ctx = recommended_context(arch, vram_mib, ram_mib, kv_cache_type)
+    chosen_ctx = recommended_context(
+        arch,
+        vram_mib,
+        ram_mib,
+        kv_cache_type,
+        ContextPolicy(profile=profile, parallel=parallel, context_cap=args.context),
+    )
     if not chosen_ctx:
         print(
             "error: could not calculate a viable context recommendation",
@@ -290,8 +303,29 @@ def main() -> None:
         )
         sys.exit(1)
 
-    _print_report(arch, vram_mib, ram_mib, kv_cache_type, chosen_ctx)
-    output_limit = max_output_tokens(arch)
+    if args.context and chosen_ctx < min(args.context, arch.context_length):
+        print(
+            f"warning: requested context does not fit safely on GPU; using {chosen_ctx} tokens",
+            file=sys.stderr,
+        )
+    output_limit = recommended_output_limit(arch, chosen_ctx, profile, args.output)
+    if args.output and output_limit < args.output:
+        print(
+            f"warning: output target exceeds the safe/model limit; using {output_limit} tokens",
+            file=sys.stderr,
+        )
+    print_report(
+        RecommendationReport(
+            arch=arch,
+            vram_mib=vram_mib,
+            ram_mib=ram_mib,
+            kv_cache_type=kv_cache_type,
+            context=chosen_ctx,
+            profile=profile,
+            parallel=parallel,
+            output_limit=output_limit,
+        )
+    )
 
     _write_modelfile(modelfile_path, model_id, chosen_ctx)
     opencode_path = Path.cwd() / ".opencode" / "opencode.json"
