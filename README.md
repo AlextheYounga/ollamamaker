@@ -27,7 +27,8 @@ Create tuned Ollama models from your local hardware profile, generate Modelfiles
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - Ollama installed and running locally
-  - expected base URL: `http://localhost:11434`
+  - default base URL: `http://localhost:11434`
+  - set `OLLAMA_BASE_URL` to use another Ollama server
 - Linux is currently the primary target for hardware autodetection
   - VRAM: `nvidia-smi`
   - RAM: `/proc/meminfo`
@@ -123,12 +124,23 @@ It ensures and updates:
 - `$schema`: `https://opencode.ai/config.json`
 - `provider.ollama.npm`: `@ai-sdk/openai-compatible`
 - `provider.ollama.name`: `Ollama (local)`
-- `provider.ollama.options.baseURL`: `http://localhost:11434/v1`
+- `provider.ollama.options.baseURL`: the configured `OLLAMA_BASE_URL` with `/v1` appended
 - `provider.ollama.models.<new_model_name>.name`
 - `provider.ollama.models.<new_model_name>.limit.context`
 - `provider.ollama.models.<new_model_name>.limit.output`
 
 Other existing config keys are preserved.
+
+## Ollama server URL
+
+The CLI uses `OLLAMA_BASE_URL` for model discovery, metadata, and VRAM queries. It defaults to
+`http://localhost:11434` when the variable is not set. Trailing slashes are ignored.
+
+```bash
+OLLAMA_BASE_URL=http://192.168.1.20:11434 ollamamaker qwen3:4b --profile balanced
+```
+
+When creating OpenCode configuration, the same server is written as its OpenAI-compatible `/v1` endpoint.
 
 ## Context profiles
 

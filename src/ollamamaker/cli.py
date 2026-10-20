@@ -15,6 +15,7 @@ from .core import (
     detect_hardware,
     fetch_available_models,
     fetch_model_arch,
+    ollama_base_url,
     recommended_context,
     recommended_output_limit,
 )
@@ -49,6 +50,7 @@ def _ensure_opencode_config(
     model_name: str,
     context_limit: int,
     output_limit: int,
+    ollama_url: str,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data: dict = {}
@@ -69,7 +71,7 @@ def _ensure_opencode_config(
     ollama_provider.setdefault("name", "Ollama (local)")
 
     options = _dict_value(ollama_provider, "options")
-    options.setdefault("baseURL", "http://localhost:11434/v1")
+    options.setdefault("baseURL", f"{ollama_url}/v1")
     ollama_provider["options"] = options
 
     models = _dict_value(ollama_provider, "models")
@@ -199,7 +201,7 @@ def _run_create_model(new_model_name: str, modelfile_path: Path) -> None:
 
 
 def _collect_inputs(args: argparse.Namespace) -> tuple[str, str, str, str]:
-    available_models = fetch_available_models()
+    available_models = fetch_available_models(ollama_base_url())
     if not available_models:
         raise OllamaError("no local Ollama models found")
     model_id = (
@@ -270,7 +272,7 @@ def main() -> None:
 
     try:
         model_id, new_model_name, kv_cache_type, profile = _collect_inputs(args)
-        arch = fetch_model_arch(model_id)
+        arch = fetch_model_arch(model_id, ollama_base_url())
         parallel = _configured_parallel(args)
     except OllamaError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -329,7 +331,7 @@ def main() -> None:
 
     _write_modelfile(modelfile_path, model_id, chosen_ctx)
     opencode_path = Path.cwd() / ".opencode" / "opencode.json"
-    _ensure_opencode_config(opencode_path, new_model_name, chosen_ctx, output_limit)
+    _ensure_opencode_config(opencode_path, new_model_name, chosen_ctx, output_limit, ollama_base_url())
 
     print()
     print(f"Updated Modelfile: {modelfile_path}")

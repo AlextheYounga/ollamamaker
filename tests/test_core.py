@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from ollamamaker.core import recommended_context, recommended_output_limit, recommended_tiers
+from ollamamaker.core import ollama_base_url, recommended_context, recommended_output_limit, recommended_tiers
 from ollamamaker.models import ContextPolicy, ModelArch
 
 
@@ -59,6 +60,16 @@ class RecommendedContextTests(unittest.TestCase):
         chosen = recommended_context(model_arch(), 0, 65_536, policy=ContextPolicy(profile="maximum"))
 
         self.assertEqual(chosen, 0)
+
+
+class OllamaUrlTests(unittest.TestCase):
+    def test_default_url_is_localhost(self) -> None:
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertEqual(ollama_base_url(), "http://localhost:11434")
+
+    def test_environment_url_is_used_without_trailing_slash(self) -> None:
+        with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://ollama.example:11434///"}):
+            self.assertEqual(ollama_base_url(), "http://ollama.example:11434")
 
 
 class RecommendedOutputLimitTests(unittest.TestCase):

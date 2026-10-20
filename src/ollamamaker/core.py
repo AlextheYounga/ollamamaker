@@ -1,6 +1,7 @@
 """Core Ollama data fetching and recommendation calculations."""
 
 import json
+import os
 import re
 import subprocess
 import urllib.error
@@ -15,7 +16,6 @@ from .models import (
     DEFAULT_OUTPUT_LIMIT,
     KNOWN_OUTPUT_LIMITS,
     KV_CACHE_TYPES,
-    OLLAMA_API,
     ContextPolicy,
     ModelArch,
     OllamaError,
@@ -27,6 +27,12 @@ VRAM_HEADROOM_RATIO = 0.10
 THOUSAND = 1_000
 MILLION = 1_000_000
 MIB = 1_024
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+
+
+def ollama_base_url() -> str:
+    """Return the configured Ollama server URL without a trailing slash."""
+    return os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL).rstrip("/")
 
 
 def fmt_tokens(n: int) -> str:
@@ -186,8 +192,9 @@ def _api_get(path: str, api_base: str) -> dict:
         return {}
 
 
-def fetch_available_models(api_base: str = OLLAMA_API) -> list[str]:
+def fetch_available_models(api_base: str | None = None) -> list[str]:
     """List locally available Ollama model ids."""
+    api_base = api_base or ollama_base_url()
     resp = _api_get("/api/tags", api_base)
     return [model.get("name", "") for model in resp.get("models", []) if model.get("name")]
 
@@ -200,8 +207,9 @@ def _fetch_model_vram_from_ps(model: str, api_base: str) -> int:
     return 0
 
 
-def fetch_model_arch(model: str, api_base: str = OLLAMA_API) -> ModelArch:
+def fetch_model_arch(model: str, api_base: str | None = None) -> ModelArch:
     """Fetch and normalize architecture metadata for a model."""
+    api_base = api_base or ollama_base_url()
     resp = _api_post("/api/show", {"model": model}, api_base)
     model_info = resp.get("model_info", {})
     details = resp.get("details", {})

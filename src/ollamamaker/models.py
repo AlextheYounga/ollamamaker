@@ -68,7 +68,6 @@ KV_CACHE_TYPES: dict[str, float] = {
 DEFAULT_KV_CACHE_TYPE = "f16"
 
 CTX_TIERS = [2_048, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144]
-OLLAMA_API = "http://localhost:11434"
 
 QUANT_BITS_PER_PARAM: dict[str, float] = {
     "Q2_K": 2.6,
