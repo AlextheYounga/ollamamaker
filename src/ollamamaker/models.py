@@ -23,6 +23,23 @@ class ModelArch:
     model_weight_mib: int
 
 
+@dataclass(frozen=True)
+class ContextProfile:
+    """Interactive context and output targets."""
+
+    context: int | None
+    output: int
+
+
+@dataclass(frozen=True)
+class ContextPolicy:
+    """Context selection controls for one Ollama runtime."""
+
+    profile: str = "balanced"
+    parallel: int = 1
+    context_cap: int | None = None
+
+
 KNOWN_OUTPUT_LIMITS: dict[str, int] = {
     "qwen3": 32_768,
     "qwen35": 8_192,
@@ -34,6 +51,14 @@ KNOWN_OUTPUT_LIMITS: dict[str, int] = {
     "phi3": 4_096,
 }
 DEFAULT_OUTPUT_LIMIT = 8_192
+
+CONTEXT_PROFILES: dict[str, ContextProfile] = {
+    "fast": ContextProfile(context=32_768, output=4_096),
+    "balanced": ContextProfile(context=65_536, output=8_192),
+    "long": ContextProfile(context=131_072, output=8_192),
+    "maximum": ContextProfile(context=None, output=16_384),
+}
+DEFAULT_CONTEXT_PROFILE = "balanced"
 
 KV_CACHE_TYPES: dict[str, float] = {
     "f16": 2.0,

@@ -8,18 +8,22 @@ import urllib.request
 from pathlib import Path
 
 from .models import (
+    CONTEXT_PROFILES,
     CTX_TIERS,
+    DEFAULT_CONTEXT_PROFILE,
     DEFAULT_KV_CACHE_TYPE,
     DEFAULT_OUTPUT_LIMIT,
     KNOWN_OUTPUT_LIMITS,
     KV_CACHE_TYPES,
     OLLAMA_API,
+    ContextPolicy,
     ModelArch,
     OllamaError,
     estimate_model_weight_mib,
 )
 
 RUNTIME_OVERHEAD_MIB = 512
+VRAM_HEADROOM_RATIO = 0.10
 THOUSAND = 1_000
 MILLION = 1_000_000
 MIB = 1_024
@@ -70,15 +74,17 @@ def recommended_tiers(
     vram_mib: int,
     ram_mib: int,
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
+    parallel: int = 1,
 ) -> list[tuple[int, int, str]]:
     """Return context tiers with KV size and placement label."""
-    vram_for_kv = max(0, vram_mib - arch.model_weight_mib - RUNTIME_OVERHEAD_MIB)
+    vram_budget = int(vram_mib * (1 - VRAM_HEADROOM_RATIO))
+    vram_for_kv = max(0, vram_budget - arch.model_weight_mib - RUNTIME_OVERHEAD_MIB)
     total_memory_mib = vram_mib + ram_mib
     results = []
     for ctx in CTX_TIERS:
         if ctx > arch.context_length:
             break
-        kv_mib = kv_cache_bytes(arch, ctx, kv_cache_type) // (1024 * 1024)
+        kv_mib = kv_cache_bytes(arch, ctx, kv_cache_type) * parallel // (1024 * 1024)
         label = "too large"
         if kv_mib <= vram_for_kv:
             label = "GPU-only"
@@ -93,14 +99,36 @@ def recommended_context(
     vram_mib: int,
     ram_mib: int,
     kv_cache_type: str = DEFAULT_KV_CACHE_TYPE,
+    policy: ContextPolicy | None = None,
 ) -> int:
-    """Choose the highest recommended context based on available memory."""
-    tiers = recommended_tiers(arch, vram_mib, ram_mib, kv_cache_type)
-    viable = [(ctx, lbl) for ctx, _, lbl in tiers if lbl != "too large"]
-    if not viable:
-        return 0
-    gpu_only = [ctx for ctx, lbl in viable if lbl == "GPU-only"]
-    return gpu_only[-1] if gpu_only else viable[-1][0]
+    """Choose a profile target that fits entirely in GPU memory."""
+    policy = policy or ContextPolicy()
+    target = policy.context_cap if policy.context_cap is not None else CONTEXT_PROFILES[policy.profile].context
+    limit = min(arch.context_length, target) if target is not None else arch.context_length
+    candidates = sorted({ctx for ctx in CTX_TIERS if ctx <= limit} | {limit})
+    tiers = recommended_tiers(arch, vram_mib, ram_mib, kv_cache_type, policy.parallel)
+    placement = {ctx: label for ctx, _, label in tiers}
+
+    if limit not in placement:
+        kv_mib = kv_cache_bytes(arch, limit, kv_cache_type) * policy.parallel // (1024 * 1024)
+        vram_budget = int(vram_mib * (1 - VRAM_HEADROOM_RATIO))
+        vram_for_kv = max(0, vram_budget - arch.model_weight_mib - RUNTIME_OVERHEAD_MIB)
+        placement[limit] = "GPU-only" if kv_mib <= vram_for_kv else "too large"
+
+    gpu_only = [ctx for ctx in candidates if placement.get(ctx) == "GPU-only"]
+    return gpu_only[-1] if gpu_only else 0
+
+
+def recommended_output_limit(
+    arch: ModelArch,
+    context: int,
+    profile: str = DEFAULT_CONTEXT_PROFILE,
+    output_cap: int | None = None,
+) -> int:
+    """Choose an output budget that leaves most context available for input."""
+    profile_cap = CONTEXT_PROFILES[profile].output
+    requested_cap = output_cap if output_cap is not None else profile_cap
+    return min(max_output_tokens(arch), requested_cap, context // 4)
 
 
 def detect_hardware() -> tuple[int, int]:

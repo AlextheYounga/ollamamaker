@@ -13,6 +13,11 @@ Create tuned Ollama models from your local hardware profile, generate Modelfiles
   - available RAM,
   - selected KV cache type (`f16`, `q8_0`, `q4_0`).
 - Chooses a recommended context size.
+- Uses workload profiles instead of automatically selecting the largest context that fits:
+  - `fast`: 32K context / 4K output
+  - `balanced`: 64K context / 8K output (default)
+  - `long`: 128K context / 8K output
+  - `maximum`: largest GPU-safe context / up to 16K output
 - Writes a Modelfile (default location: `~/.ollama/custom`).
 - Updates `.opencode/opencode.json` with provider/model limits.
 - Runs `ollama create` for your new model.
@@ -48,6 +53,7 @@ You will be prompted for:
 - source model (must already exist in local Ollama)
 - new model name (blank uses suggested default)
 - KV cache type
+- context profile
 
 Then `ollamamaker` will:
 
@@ -59,7 +65,7 @@ Then `ollamamaker` will:
 ## CLI usage
 
 ```text
-ollamamaker [model] [--name NAME] [--kv-cache-type {f16,q4_0,q8_0}] [--vram GB] [--ram GB] [--modelfile PATH] [--edit]
+ollamamaker [model] [--name NAME] [--kv-cache-type {f16,q4_0,q8_0}] [--profile {fast,balanced,long,maximum} | --context TOKENS] [--output TOKENS] [--parallel N] [--vram GB] [--ram GB] [--modelfile PATH] [--edit]
 ```
 
 ### Arguments
@@ -70,6 +76,10 @@ ollamamaker [model] [--name NAME] [--kv-cache-type {f16,q4_0,q8_0}] [--vram GB] 
 
 - `--name NAME`: output model name for `ollama create`
 - `--kv-cache-type {f16,q4_0,q8_0}`: cache precision used for recommendations
+- `--profile {fast,balanced,long,maximum}`: context and output policy
+- `--context TOKENS`: exact context target instead of a profile target
+- `--output TOKENS`: output target, capped by the model limit and one quarter of context
+- `--parallel N`: parallel requests included in KV-cache estimates; defaults to `OLLAMA_NUM_PARALLEL` or `1`
 - `--vram GB`: override autodetected VRAM
 - `--ram GB`: override autodetected RAM
 - `--modelfile PATH`: explicit Modelfile path
@@ -120,6 +130,23 @@ It ensures and updates:
 
 Other existing config keys are preserved.
 
+## Context profiles
+
+Profiles keep context and output budgets coherent for interactive use. A target is automatically reduced when it
+exceeds the model architecture limit or cannot fit entirely in GPU memory. Recommendations reserve 10% of VRAM plus
+runtime overhead, and context memory is multiplied by the configured parallel-request count.
+
+`maximum` is deliberately opt-in. It selects the largest architecture-supported tier that remains GPU-only; the CLI
+never recommends a context that requires model placement in system RAM.
+
+Examples:
+
+```bash
+ollamamaker qwen3:4b --name qwen3-balanced:latest --profile balanced
+ollamamaker qwen3:4b --name qwen3-long:latest --profile long
+ollamamaker qwen3:4b --name qwen3-96k:latest --context 98304 --output 8192
+```
+
 ## Notes on KV cache type
 
 KV cache type is a runtime memory format, not the model weight quantization.
@@ -136,6 +163,12 @@ Run lint checks:
 
 ```bash
 uv run ruff check
+```
+
+Run tests:
+
+```bash
+PYTHONPATH=src uv run python -m unittest discover -s tests -v
 ```
 
 Show CLI help:
